@@ -1,0 +1,127 @@
+package com.sbi.sg.appointment.sb.indexer;
+
+import java.util.Locale;
+
+import javax.portlet.PortletRequest;
+import javax.portlet.PortletResponse;
+
+import com.liferay.portal.kernel.dao.orm.IndexableActionableDynamicQuery;
+import com.liferay.portal.kernel.exception.PortalException;
+import com.liferay.portal.kernel.log.Log;
+import com.liferay.portal.kernel.log.LogFactoryUtil;
+import com.liferay.portal.kernel.search.BaseIndexer;
+import com.liferay.portal.kernel.search.Document;
+import com.liferay.portal.kernel.search.Field;
+import com.liferay.portal.kernel.search.IndexWriterHelper;
+import com.liferay.portal.kernel.search.IndexerRegistry;
+import com.liferay.portal.kernel.search.Summary;
+import com.liferay.portal.kernel.util.GetterUtil;
+import com.sbi.sg.appointment.sb.model.Appointment;
+import com.sbi.sg.appointment.sb.service.AppointmentLocalService;
+
+/**
+ * @author Umesh Asodekar
+ */
+public class AppointmentIndexer extends BaseIndexer<Appointment> {
+
+	public static final String CLASS_NAME = AppointmentIndexer.class.getName();
+
+	public AppointmentIndexer() {
+		setDefaultSelectedFieldNames(
+			Field.COMPANY_ID, Field.ENTRY_CLASS_NAME, Field.ENTRY_CLASS_PK,
+			Field.UID, Field.MODIFIED_DATE);
+		setPermissionAware(true);
+		setFilterSearch(true);
+	}
+
+	@Override
+	public String getClassName() {
+		return CLASS_NAME;
+	}
+
+	@Override
+	protected void doDelete(Appointment appointment) throws Exception {
+		deleteDocument(
+			appointment.getCompanyId(),
+			appointment.getAppointmentId());
+	}
+
+	@Override
+	protected Document doGetDocument(Appointment appointment)
+		throws Exception {
+
+		return getBaseModelDocument(CLASS_NAME, appointment);
+	}
+
+	@Override
+	protected Summary doGetSummary(
+			Document document, Locale locale, String snippet,
+			PortletRequest portletRequest, PortletResponse portletResponse)
+			throws Exception {
+
+		Summary summary = createSummary(document, Field.TITLE, Field.DESCRIPTION);
+		summary.setMaxContentLength(200);
+		return summary;
+
+	}
+
+	@Override
+	protected void doReindex(Appointment appointment) throws Exception {
+		indexWriterHelper.updateDocument(
+			getSearchEngineId(), appointment.getCompanyId(),
+			getDocument(appointment), isCommitImmediately());
+
+	}
+
+	@Override
+	protected void doReindex(String className, long classPK) throws Exception {
+		Appointment appointment =
+			appointmentLocalService.getAppointment(classPK);
+
+		doReindex(appointment);
+	}
+
+	@Override
+	protected void doReindex(String[] ids) throws Exception {
+		long companyId = GetterUtil.getLong(ids[0]);
+
+		reindexAppointments(companyId);
+	}
+
+	protected void reindexAppointments(long companyId) throws Exception {
+		
+		final IndexableActionableDynamicQuery indexableActionableDynamicQuery =
+			appointmentLocalService.getIndexableActionableDynamicQuery();
+
+		indexableActionableDynamicQuery.setCompanyId(companyId);
+		indexableActionableDynamicQuery.setPerformActionMethod(
+			(Appointment appointment) -> {
+				try {
+					Document document = getDocument(appointment);
+
+					if (document != null) {
+						indexableActionableDynamicQuery.addDocuments(document);
+					}
+				}
+				catch (PortalException portalException) {
+					if (_log.isWarnEnabled()) {
+						_log.warn(
+							"Unable to index form instance record " +
+								appointment.getAppointmentId(),
+							portalException);
+					}
+				}
+			});
+		indexableActionableDynamicQuery.setSearchEngineId(getSearchEngineId());
+
+		indexableActionableDynamicQuery.performActions();
+	}
+
+	protected AppointmentLocalService appointmentLocalService;
+	protected IndexerRegistry indexerRegistry;
+	protected IndexWriterHelper indexWriterHelper;
+
+	private static final Log _log = LogFactoryUtil.getLog(
+		AppointmentIndexer.class);
+
+}
